@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AstraBloom</title>
+  <meta name="color-scheme" content="dark" />
+  <style>
+    :root{
+      --bg-0:#070b18; --bg-1:#0b1226; --glass:#0e1838cc; --line:#213157;
+      --ink:#e9eef7; --muted:#a9b7d9; --btn:#172753; --btn-hover:#1f3270;
+      --glow: 0 8px 30px rgba(50,100,220,.25);
+      --earth-ocean-top:#0e3850; --earth-ocean-bottom:#04222f;
+      --earth-land:#2a8c5b; --earth-land-2:#1e5e3b; --earth-coast:#9fd9b8; --city:#ffd867;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;height:100%;color:var(--ink);background:radial-gradient(1200px 600px at 60% -10%, #0f2255 0%, var(--bg-1) 40%, var(--bg-0) 100%);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Inter,Helvetica,Arial,sans-serif;overflow:hidden}
+    header#hdr{
+      position:sticky;top:0;z-index:10;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
+      padding:12px 16px;background:linear-gradient(180deg, rgba(8,14,33,.9), rgba(8,14,33,.6));
+      border-bottom:1px solid var(--line);backdrop-filter:saturate(120%) blur(6px);
+    }
+    .brand{display:flex;align-items:center;gap:10px}
+    .brand .logo{width:28px;height:28px;border-radius:50%;background: conic-gradient(from 0deg, #9ddcff, #c9b7ff, #ffd1a8, #9ddcff);box-shadow:var(--glow)}
+    .brand h1{margin:0;font-size:15px;letter-spacing:.4px;font-weight:600;color:#eaf2ff}
+    .controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .btn{padding:8px 12px;border:1px solid var(--line);background:var(--btn);color:var(--ink);border-radius:12px;cursor:pointer;transition:.15s;font-weight:600;}
+    .btn:hover{background:var(--btn-hover);box-shadow:var(--glow)}
+    .btn.ghost{background:transparent}
+    #status{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:rgba(15,25,50,.4)}
+    #status.ok{color:#bff3cf;border-color:#2b6;background:rgba(20,60,30,.25)}
+    #wrap{position:relative}
+    canvas{display:block;width:100vw;height:calc(100vh - var(--header-h));background:transparent}
+    .overlay{position:absolute;left:12px;bottom:12px;max-width:min(520px,60vw);max-height:26vh;overflow:auto;background:var(--glass);backdrop-filter: blur(6px) saturate(120%);border:1px solid var(--line);border-radius:14px;padding:10px 12px;font-size:12px;line-height:1.35;color:#dfe7ff; box-shadow:var(--glow)}
+    .overlay.hidden{display:none}
+    footer{position:fixed; right:14px; bottom:12px; font-size:12px; color:var(--muted);background:rgba(10,18,42,.6); padding:6px 10px; border:1px solid var(--line); border-radius:10px; backdrop-filter: blur(4px)}
+    .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;background:#0e1a39;border:1px solid #20325a;padding:2px 6px;border-radius:6px;color:#d7e4ff}
+  </style>
+</head>
+<body>
+  <header id="hdr">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"></div>
+      <h1>AstraBloom</h1>
+    </div>
+    <div class="controls">
+      <button id="connect" class="btn">🔌 Connect Sensor</button>
+      <span id="status">Serial: not connected</span>
+      <button id="clear" class="btn ghost">🧹 Clear</button>
+      <button id="toggleLog" class="btn ghost">📜 Log</button>
+      <button id="helpBtn" class="btn ghost">❓ Help</button>
+    </div>
+  </header>
+
+  <div id="wrap">
+    <canvas id="cv" aria-label="Bloomfall visual canvas"></canvas>
+    <div id="panel" class="overlay hidden" role="region" aria-label="Log panel">
+      <h3 style="margin:0 0 6px 0;font-size:12px;color:#b7c6ee">Event Log</h3>
+      <pre id="log" style="margin:0;white-space:pre-wrap"></pre>
+    </div>
+  </div>
+
+  <audio id="twinkle-template" preload="auto">
+    <source src="sound-effect-twinklesparkle-115095.mp3" type="audio/mpeg" />
+  </audio>
+
+  <footer>
+    Tip: Use the sensor to make blooms. <span class="kbd">C</span> connect • <span class="kbd">L</span> log • <span class="kbd">X</span> clear • <span class="kbd">?</span> help
+  </footer>
+
+<script>
+
+const ALLOW_MOUSE_FALLBACK = true;         
+const AUDIO_SRC = document.getElementById('twinkle-template').querySelector('source').src;
+const AUDIO_POOL_SIZE = 5;
+const AUDIO_BASE_GAIN = 0.20;               
+const AUDIO_MIN_RATE = 0.96, AUDIO_MAX_RATE = 1.04;
+
+const SHOWCASE_MS = 10000;                  
+const SKY_HEIGHT_RATIO = 0.35;              
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d', { alpha:true });
+const hdr = document.getElementById('hdr');
+function sizeCanvas(){
+  const h = hdr.getBoundingClientRect().height;
+  document.documentElement.style.setProperty('--header-h', h + 'px');
+  cv.width = window.innerWidth;
+  cv.height = Math.max(420, window.innerHeight - h);
+}
+window.addEventListener('resize', sizeCanvas); sizeCanvas();
+const panel = document.getElementById('panel');
+const logEl = document.getElementById('log');
+function log(m){ logEl.textContent += m + "\n"; logEl.scrollTop = logEl.scrollHeight; console.log(m); }
+function setStatus(m, ok=false){ const st = document.getElementById('status'); st.textContent = m; st.classList.toggle('ok', !!ok); }
+
+const pool = []; let poolIdx = 0;
+function initAudioPool(){
+  if(pool.length) return;
+  for(let i=0;i<AUDIO_POOL_SIZE;i++){
+    const a = new Audio(AUDIO_SRC);
+    a.preload = 'auto';
+    a.volume = AUDIO_BASE_GAIN;
+    a.addEventListener('error', e=>console.warn('Audio error', e));
+    pool.push(a);
+  }
+  log('Audio: pool ready ('+AUDIO_POOL_SIZE+')');
+}
+['pointerdown','keydown','click'].forEach(ev=>{
+  window.addEventListener(ev, ()=>initAudioPool(), { once:true });
+});
+function playStarSound(){
+  if(!pool.length) return;
+  const base = pool[poolIdx++ % pool.length];
+  const node = base.paused ? base : base.cloneNode(true);
+  node.currentTime = 0;
+  node.volume = AUDIO_BASE_GAIN;
+  node.playbackRate = AUDIO_MIN_RATE + Math.random()*(AUDIO_MAX_RATE - AUDIO_MIN_RATE);
+  node.play().catch(err=>{
+    console.warn('Audio play blocked:', err);
+  });
+}
+
+let blooms = [], starsGlow = [], placedStars = [], movingStars = [], links = [], orbs = [];
+let lastSpawn = 0, REFR = 160;
+let activeConstel = null, nextNodeIdx = 0, constelCompletedAt = 0;
+
+let fallingStars = [];
+let tapTimes = [];
+const TRIPLE_TAP_WINDOW = 30000;   
+let lastTripleAt = 0;
+const TRIPLE_COOLDOWN = 800;    
+
+let nextOrbAt = performance.now() + 15000 + Math.random()*20000;
+let orbHighlightUntil = 0;
+
+
+
+function seedGlow(){
+  starsGlow.length = 0;
+  for(let i=0;i<140;i++){
+    starsGlow.push({x:Math.random()*cv.width, y:Math.random()*cv.height*0.6, r:0.6+Math.random()*1.4, ph:Math.random()*Math.PI*2, tw:0.003+Math.random()*0.008});
+  }
+}
+seedGlow();
+
+function spawnOrb(){
+  const box = getSkyBox();
+  const y = box.y + Math.random()*box.h*0.6;
+  const fromLeft = Math.random() < 0.5;
+  const x = fromLeft ? -40 : cv.width + 40;
+  const speed = 0.06; 
+
+  const vx = (fromLeft ? 1 : -1) * (cv.width * speed / 1000);
+
+  orbs.push({
+    x,
+    y,
+    vx,
+    age: 0,
+    life: 12000 
+  });
+}
+
+function consumeOrb(now){
+  if (!orbs.length) return false;
+  orbs.length = 0;
+  orbHighlightUntil = now + 900;
+  nextOrbAt = now + 25000 + Math.random()*15000;
+  log("Astra Orb caught! Bonus blooms.");
+  return true;
+}
+
+function randSeeded(seed){ let t = seed += 0x6D2B79F5; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+function drawLandBlobs(ctx, cx, cy, radius, horizonY){
+  ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, radius, Math.PI, Math.PI*2); ctx.clip();
+  const blobs = 5;
+  for(let b=0;b<blobs;b++){
+    const sx = (b+1)/(blobs+1);
+    const ang = Math.PI * (0.98 + 0.04*sx);
+    const R = radius - 18 - 40*randSeeded(b*991);
+    const bx = cx + Math.cos(ang)*R;
+    const by = cy + Math.sin(ang)*R - 10*randSeeded(b*1243);
+    const base = 140 + 90*randSeeded(b*77);
+    const petals = 7 + (randSeeded(b*311)*4|0);
+
+    ctx.beginPath();
+    for(let i=0;i<=petals;i++){
+      const t = i/petals * Math.PI*2;
+      const r = base * (0.72 + 0.35*Math.sin(t*2 + b));
+      const x = bx + Math.cos(t)*r;
+      const y = by + Math.sin(t)*(r*0.72);
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    const g = ctx.createLinearGradient(bx, by-80, bx, by+80);
+    g.addColorStop(0, getComputedStyle(document.documentElement).getPropertyValue('--earth-land-2') || '#1e5e3b');
+    g.addColorStop(1, getComputedStyle(document.documentElement).getPropertyValue('--earth-land')   || '#2a8c5b');
+    ctx.fillStyle = g; ctx.globalAlpha = 0.9; ctx.fill();
+
+    ctx.globalAlpha = 1; ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--earth-coast') || '#9fd9b8';
+    ctx.lineWidth = 1; ctx.globalCompositeOperation = 'screen'; ctx.stroke();
+    ctx.globalCompositeOperation = 'overlay';
+    for(let i=0;i<120;i++){
+      const rx = bx + (randSeeded(b*500+i)*2-1)*base;
+      const ry = by + (randSeeded(b*700+i)*2-1)*base*0.7;
+      if((rx-cx)**2 + (ry-cy)**2 > (radius-2)**2) continue;
+      ctx.fillStyle = `rgba(255,255,255,${0.03*randSeeded(i+b)})`;
+      ctx.fillRect(rx, ry, 2, 2);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  ctx.globalAlpha = 0.08; ctx.strokeStyle = '#9fd9b8';
+  for(let k=0;k<4;k++){ ctx.beginPath(); const r = radius - 14 - k*10; ctx.arc(cx, cy, r, Math.PI*1.01, Math.PI*1.99); ctx.stroke(); }
+  ctx.globalAlpha = 1;
+
+  const lights = 220; ctx.save(); ctx.globalCompositeOperation = 'screen';
+  for(let i=0;i<lights;i++){
+    const a = Math.PI + (Math.random()*Math.PI); const rr = radius - 6 - 18*Math.random();
+    const x = cx + Math.cos(a)*rr; const y = cy + Math.sin(a)*rr;
+    if (y < horizonY-6) continue;
+    const glow = ctx.createRadialGradient(x,y,0, x,y, 4);
+    glow.addColorStop(0, (getComputedStyle(document.documentElement).getPropertyValue('--city') || '#ffd867') + 'ee');
+    glow.addColorStop(1, 'rgba(255,216,103,0)');
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(x,y,4,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore(); ctx.restore();
+}
+
+const CONSTELLATIONS = {
+  Cassiopeia: { nodes: [[0.00,0.55],[0.25,0.20],[0.50,0.60],[0.75,0.30],[1.00,0.55]], edges: [[0,1],[1,2],[2,3],[3,4]] },
+  Orion:      { nodes: [[0.30,0.40],[0.45,0.46],[0.60,0.42],[0.50,0.25],[0.38,0.65],[0.62,0.66],[0.50,0.82]], edges: [[0,1],[1,2],[1,3],[1,4],[1,5],[4,6],[5,6]] },
+  Triangulum: { nodes: [[0.10,0.40],[0.50,0.15],[0.85,0.45]], edges: [[0,1],[1,2],[2,0]] },
+  Lyra:       { nodes: [[0.15,0.30],[0.48,0.18],[0.80,0.28],[0.55,0.45],[0.45,0.38]], edges: [[0,1],[1,2],[1,3],[3,4],[4,0]] },
+  UrsaMajor:  { nodes: [[0.05,0.40],[0.18,0.36],[0.32,0.38],[0.48,0.42],[0.65,0.46],[0.82,0.48],[0.95,0.44]], edges: [[0,1],[1,2],[2,3],[3,4],[4,5],[5,6]] },
+  Cygnus:     { nodes: [[0.10,0.30],[0.40,0.30],[0.70,0.30],[0.40,0.55],[0.40,0.15]], edges: [[0,1],[1,2],[1,3],[1,4]] },
+  Scorpius:   { nodes: [[0.10,0.20],[0.20,0.28],[0.30,0.35],[0.42,0.42],[0.52,0.48],[0.62,0.55],[0.75,0.65],[0.86,0.72]], edges: [[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7]] },
+  Taurus:     { nodes: [[0.20,0.35],[0.32,0.32],[0.45,0.28],[0.58,0.24],[0.40,0.45],[0.52,0.50]], edges: [[0,1],[1,2],[2,3],[0,4],[4,5]] },
+  Pleiades:   { nodes: [[0.35,0.25],[0.42,0.20],[0.48,0.23],[0.54,0.19],[0.58,0.24],[0.46,0.28],[0.40,0.30]], edges: [[0,1],[1,2],[2,3],[3,4],[2,5],[5,6]] },
+  Aquila:     { nodes: [[0.20,0.45],[0.35,0.35],[0.50,0.45],[0.65,0.35],[0.80,0.45]], edges: [[0,1],[1,2],[2,3],[3,4]] },
+  Perseus:    { nodes: [[0.15,0.50],[0.30,0.42],[0.45,0.36],[0.55,0.28],[0.65,0.38],[0.78,0.48]], edges: [[0,1],[1,2],[2,3],[3,4],[4,5]] },
+  Andromeda:  { nodes: [[0.10,0.32],[0.25,0.28],[0.40,0.26],[0.55,0.24],[0.70,0.22]], edges: [[0,1],[1,2],[2,3],[3,4]] },
+  Pegasus:    { nodes: [[0.20,0.20],[0.50,0.20],[0.50,0.45],[0.20,0.45]], edges: [[0,1],[1,2],[2,3],[3,0]] },
+  CanisMajor: { nodes: [[0.25,0.55],[0.35,0.48],[0.50,0.50],[0.65,0.52],[0.78,0.58]], edges: [[0,1],[1,2],[2,3],[3,4]] },
+  Sagittarius:{ nodes: [[0.30,0.60],[0.40,0.50],[0.50,0.55],[0.60,0.45],[0.70,0.52]], edges: [[0,1],[1,2],[2,3],[3,4]] }
+};
+
+function getSkyBox(){
+  const topH = cv.height * SKY_HEIGHT_RATIO;
+  const marginX = cv.width * 0.12;
+  const marginY = topH * 0.12;
+  return { x: marginX, y: marginY, w: cv.width - marginX*2, h: topH - marginY*2 };
+}
+function chooseConstellation(){
+  const names = Object.keys(CONSTELLATIONS);
+  const name = names[Math.floor(Math.random()*names.length)];
+  const tpl = CONSTELLATIONS[name];
+  const box = getSkyBox();
+  const nodes = tpl.nodes.map(([nx,ny]) => ({ x: box.x + nx*box.w, y: box.y + ny*box.h }));
+  activeConstel = { name, nodes, edges: tpl.edges };
+  nextNodeIdx = 0;
+  constelCompletedAt = 0;
+  placedStars.length = 0; movingStars.length = 0; links.length = 0;
+}
+chooseConstellation();
+
+function ensureActiveSlot(){
+  if(!activeConstel || nextNodeIdx >= activeConstel.nodes.length){
+    chooseConstellation();
+    constelCompletedAt = 0; 
+  }
+}
+
+function spawnFallingStar(){
+  const box = getSkyBox();
+  const fromLeft = Math.random() < 0.5;
+
+  const startX = fromLeft ? box.x - 60 : box.x + box.w + 60;
+  const startY = box.y + box.h * (0.15 + Math.random() * 0.3); 
+
+  const speed = cv.width * 0.7; 
+  const vx = (fromLeft ? 1 : -1) * (speed / 1000); 
+  const vy = (speed / 1000) * 0.45;                
+
+  fallingStars.push({
+    x: startX,
+    y: startY,
+    vx,
+    vy,
+    age: 0,
+    life: 2000,    
+    trail: []
+  });
+}
+
+function assignNextNode(fromX, fromY, size){
+  ensureActiveSlot();
+  const target = activeConstel.nodes[nextNodeIdx];
+  movingStars.push({
+    bx: fromX, by: fromY,
+    tx: target.x, ty: target.y,
+    cx: fromX, cy: fromY,
+    t: 0, R: size,
+    phase: Math.random()*Math.PI*2,
+    nodeIndex: nextNodeIdx
+  });
+  nextNodeIdx++;
+}
+
+function spawnFromEarth(){
+  const horizonY = cv.height*0.78;
+  const x = 20 + Math.random()*(cv.width-40);
+  const y = horizonY - 2 + Math.random()*4;
+  const vx = (Math.random()-0.5)*0.25;
+  const vy = -(0.35 + Math.random()*0.35);
+  const rot = Math.random()*Math.PI*2, rv=(Math.random()-0.5)*0.02;
+  const rb = 12 + Math.random()*14;
+  blooms.push({x,y,vx,vy,rot,rv,rb,age:0,life: 4200 + Math.random()*1600, hue: Math.floor(Math.random()*360), sat:60, light:74, petals: 6 + Math.floor(Math.random()*4)});
+  if(blooms.length>220) blooms = blooms.slice(-220);
+}
+function handleSignal(s){
+  const now = performance.now();
+
+
+  tapTimes.push(now);
+  
+  tapTimes = tapTimes.filter(t => now - t <= TRIPLE_TAP_WINDOW);
+
+  if (tapTimes.length >= 3 && now - lastTripleAt > TRIPLE_COOLDOWN){
+    lastTripleAt = now;
+    spawnFallingStar();
+    tapTimes.length = 0; 
+  }
+
+
+  if (now - lastSpawn < REFR) return;
+  lastSpawn = now;
+
+  if (s === "2"){
+    spawnFromEarth();
+    spawnFromEarth();
+  } else {
+    spawnFromEarth();
+  }
+}
+
+function getNodePosition(i){
+  for(const m of movingStars){ if(m.nodeIndex===i) return {x:m.cx, y:m.cy}; }
+  for(const p of placedStars){ if(p.nodeIndex===i) return {x:p.x, y:p.y}; }
+  return null;
+}
+function drawShimmerStar(x,y,R,phase,now){
+  const pulse = 0.78 + 0.22*Math.sin((now*0.006) + phase);
+  const coreR = R*pulse;
+
+  ctx.save(); ctx.globalCompositeOperation="lighter";
+  ctx.fillStyle="rgba(230,240,255,0.25)";
+  ctx.shadowColor="rgba(200,215,255,0.9)";
+  ctx.shadowBlur=12;
+  ctx.beginPath(); ctx.arc(x,y,coreR*1.9,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  const wob = 0.5 + 0.5*Math.sin((now*0.01) + phase*1.7);
+  const a1 = 0.22 + 0.28*wob;
+  const len = coreR*2.8;
+  ctx.save(); ctx.globalCompositeOperation="lighter";
+  ctx.strokeStyle=`rgba(220,235,255,${a1})`;
+  ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(x-len,y); ctx.lineTo(x+len,y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x,y-len); ctx.lineTo(x,y+len); ctx.stroke();
+  ctx.globalAlpha = 0.6*a1;
+  ctx.beginPath(); ctx.moveTo(x-len*0.7,y-len*0.7); ctx.lineTo(x+len*0.7,y+len*0.7); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x-len*0.7,y+len*0.7); ctx.lineTo(x+len*0.7,y-len*0.7); ctx.stroke();
+  ctx.restore();
+
+  ctx.fillStyle="rgba(250,252,255,0.98)";
+  ctx.beginPath(); ctx.arc(x,y,coreR*0.9,0,Math.PI*2); ctx.fill();
+}
+
+let lastT = performance.now();
+function draw(now){
+  const dt = now - lastT; lastT = now;
+
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const g = ctx.createLinearGradient(0,0,0,cv.height);
+  g.addColorStop(0,"rgba(12,20,45,1)"); g.addColorStop(.55,"rgba(9,14,29,0.95)"); g.addColorStop(1,"rgba(6,9,18,0.95)");
+  ctx.fillStyle=g; ctx.fillRect(0,0,cv.width,cv.height);
+
+  for (let i = fallingStars.length - 1; i >= 0; i--){
+    const fs = fallingStars[i];
+    fs.age += dt;
+    fs.x += fs.vx * dt;
+    fs.y += fs.vy * dt;
+    fs.trail.push({ x: fs.x, y: fs.y });
+    if (fs.trail.length > 14) fs.trail.shift();
+    if (fs.age > fs.life || fs.y > cv.height + 80 || fs.x < -80 || fs.x > cv.width + 80){
+      fallingStars.splice(i, 1);
+      continue;
+    }
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    const n = fs.trail.length;
+    for (let j = 0; j < n; j++){
+      const p = fs.trail[j];
+      const t = j / n;
+      const alpha = 0.04 + 0.14 * (1 - t);
+      const r = 2 + 4 * (1 - t);
+
+      ctx.fillStyle = `rgba(220,235,255,${alpha})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "rgba(255,255,255,0.96)";
+    ctx.beginPath();
+    ctx.arc(fs.x, fs.y, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  for(const s of starsGlow){
+    s.ph += s.tw; const f=0.5+0.5*Math.sin(s.ph);
+    ctx.fillStyle=`rgba(210,230,255,${0.35+0.55*f})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r*(1+0.5*f), 0, Math.PI*2); ctx.fill();
+  }
+
+  if (now >= nextOrbAt && orbs.length === 0){
+    spawnOrb();
+    nextOrbAt = now + 20000 + Math.random()*20000; 
+  }
+
+  for (let i = orbs.length - 1; i >= 0; i--){
+    const o = orbs[i];
+    o.age += dt;
+    o.x += o.vx * dt;
+
+    if (o.age > o.life || o.x < -80 || o.x > cv.width + 80){
+      orbs.splice(i, 1);
+      continue;
+    }
+
+    const wave = Math.sin(now*0.006 + i);
+    const alpha = 0.35 + 0.35*wave;
+    const radius = 12 + 4*Math.sin(now*0.004 + i*1.7);
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+
+    const gOrb = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, radius*2.6);
+    gOrb.addColorStop(0, `rgba(200,230,255,${0.7*alpha})`);
+    gOrb.addColorStop(1, "rgba(200,230,255,0)");
+    ctx.fillStyle = gOrb;
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, radius*2.6, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255,255,255,0.96)";
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, radius*0.9, 0, Math.PI*2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  const horizonY = cv.height*0.78;
+  const radius   = cv.width*1.2;
+  const cx = cv.width/2, cy = horizonY + radius*0.82;
+  let gA = ctx.createRadialGradient(cx, horizonY, 10, cx, horizonY-18, 160);
+  gA.addColorStop(0, "rgba(90,160,255,0.22)"); gA.addColorStop(1, "rgba(90,160,255,0)");
+  ctx.fillStyle = gA; ctx.fillRect(0, horizonY-200, cv.width, 220);
+  ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, radius, Math.PI, Math.PI*2); ctx.closePath(); ctx.clip();
+  const oceanTop=getComputedStyle(document.documentElement).getPropertyValue('--earth-ocean-top')||'#0e3850';
+  const oceanBottom=getComputedStyle(document.documentElement).getPropertyValue('--earth-ocean-bottom')||'#04222f';
+  let ocean = ctx.createLinearGradient(0, horizonY-20, 0, cv.height); ocean.addColorStop(0, oceanTop); ocean.addColorStop(1, oceanBottom);
+  ctx.fillStyle = ocean; ctx.fillRect(0, horizonY-40, cv.width, cv.height-(horizonY-40)); ctx.restore();
+  for(let i=0;i<24;i++){ ctx.strokeStyle = `rgba(160,210,255, ${0.06*(1-i/24)})`; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cx, cy, radius - i, Math.PI*0.97, Math.PI*2.03); ctx.stroke(); }
+  drawLandBlobs(ctx, cx, cy, radius, horizonY);
+
+  const TWINKLE_MS = 420, DRIFT_MS = 1500;
+  const easeInOut = t => t<0.5 ? 2*t*t : 1 - Math.pow(-2*t+2,2)/2;
+
+  for(let i=movingStars.length-1; i>=0; i--){
+    const s = movingStars[i]; s.t += dt;
+    let cx1=s.bx, cy1=s.by;
+    if(s.t > TWINKLE_MS){
+      const u = Math.min(1,(s.t - TWINKLE_MS)/DRIFT_MS);
+      const e = easeInOut(u);
+      cx1 = s.bx + (s.tx - s.bx)*e;
+      cy1 = s.by + (s.ty - s.by)*e;
+    }
+    s.cx=cx1; s.cy=cy1;
+    drawShimmerStar(cx1, cy1, (s.R||3), s.phase, now);
+    if(s.t >= TWINKLE_MS + DRIFT_MS){
+      placedStars.push({x:s.tx, y:s.ty, R:s.R, nodeIndex:s.nodeIndex, phase:s.phase});
+      movingStars.splice(i,1);
+    }
+  }
+
+  links.length = 0;
+  if(activeConstel){
+    for(const [u,v] of activeConstel.edges){
+      const A=getNodePosition(u), B=getNodePosition(v);
+      if(A && B) links.push({x1:A.x,y1:A.y,x2:B.x,y2:B.y, phase: Math.random()*Math.PI*2});
+    }
+  }
+  for(const L of links){
+    const breathe=0.85+0.15*Math.sin((now*0.002)+L.phase);
+    ctx.save(); ctx.globalCompositeOperation="lighter";
+    ctx.strokeStyle=`rgba(180,200,255,${0.14*breathe})`; ctx.lineWidth=4; ctx.shadowColor="rgba(180,200,255,0.28)"; ctx.shadowBlur=12;
+    ctx.beginPath(); ctx.moveTo(L.x1,L.y1); ctx.lineTo(L.x2,L.y2); ctx.stroke(); ctx.restore();
+    ctx.strokeStyle=`rgba(220,230,255,${0.9*breathe})`; ctx.lineWidth=1.35; ctx.beginPath(); ctx.moveTo(L.x1,L.y1); ctx.lineTo(L.x2,L.y2); ctx.stroke();
+  }
+
+  if (activeConstel) {
+    const name = activeConstel.name || "";
+    const nodes = activeConstel.nodes || [];
+    const edges = activeConstel.edges || [];
+
+    const margin = 18;
+    const miniW  = 170;
+    const miniH  = 90;
+    const boxX   = cv.width - miniW - margin;
+    const boxY   = margin + 6;
+
+    ctx.save();
+
+    ctx.font = "20px system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "bottom";
+    ctx.fillStyle = "rgba(245,245,255,0.98)";
+    ctx.fillText(name, boxX + miniW, boxY - 4);
+
+    if (nodes.length > 0) {
+      const xs = nodes.map(n => n.x);
+      const ys = nodes.map(n => n.y);
+      const minx = Math.min(...xs), maxx = Math.max(...xs);
+      const miny = Math.min(...ys), maxy = Math.max(...ys);
+      const spanX = Math.max(1, maxx - minx);
+      const spanY = Math.max(1, maxy - miny);
+
+      const pad   = 8;
+      const innerW = miniW - pad*2;
+      const innerH = miniH - pad*2;
+
+      const scale = 0.9 * Math.min(innerW / spanX, innerH / spanY);
+      const cx = boxX + miniW / 2;
+      const cy = boxY + miniH / 2;
+      const cxData = (minx + maxx) / 2;
+      const cyData = (miny + maxy) / 2;
+
+      ctx.fillStyle = "rgba(8, 14, 33, 0.7)";
+      ctx.beginPath();
+      ctx.roundRect
+        ? ctx.roundRect(boxX, boxY, miniW, miniH, 14)
+        : (ctx.moveTo(boxX, boxY), ctx.lineTo(boxX+miniW, boxY),
+           ctx.lineTo(boxX+miniW, boxY+miniH), ctx.lineTo(boxX, boxY+miniH), ctx.closePath());
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(220,230,255,0.9)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      for (const [i, j] of edges) {
+        const A = nodes[i], B = nodes[j];
+        if (!A || !B) continue;
+        const ax = cx + (A.x - cxData) * scale;
+        const ay = cy + (A.y - cyData) * scale;
+        const bx2 = cx + (B.x - cxData) * scale;
+        const by2 = cy + (B.y - cyData) * scale;
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx2, by2);
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(250,252,255,1)";
+      for (const n of nodes) {
+        const px = cx + (n.x - cxData) * scale;
+        const py = cy + (n.y - cyData) * scale;
+        ctx.beginPath();
+        ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
+  }
+
+
+
+  for(const p of placedStars){ drawShimmerStar(p.x, p.y, (p.R||3), (p.phase||0), now); }
+
+  if(activeConstel){
+    const total = activeConstel.nodes.length;
+    if(placedStars.length === total && movingStars.length===0){
+      if(!constelCompletedAt) constelCompletedAt = performance.now();
+      if(performance.now() - constelCompletedAt > SHOWCASE_MS) chooseConstellation();
+    }
+  }
+
+  const wind = Math.sin(now*0.0009)*0.05 + Math.sin(now*0.00037)*0.03;
+  for(let i=blooms.length-1;i>=0;i--){
+    const b = blooms[i]; b.age += dt; b.vx += wind*0.002; b.x += b.vx; b.y += b.vy; b.rot += b.rv;
+    if(b.x<12){ b.x=12; b.vx*=-0.35; } if(b.x>cv.width-12){ b.x=cv.width-12; b.vx*=-0.35; }
+    if(b.y > cv.height*0.78 - 2){ b.y = cv.height*0.78 - 2; if(b.vy > 0) b.vy = -Math.abs(b.vy)*0.25; b.vx *= 0.96; b.rv *= 0.96; }
+
+    const t=Math.min(1, b.age/b.life); const a=1.0 - (t>0.85? (t-0.85)/0.15 : 0);
+    const pastelGlow=`hsla(${b.hue} ${b.sat}% ${Math.min(86,b.light+10)}% / ${0.10*a})`;
+    const pastelBody=`hsla(${b.hue} ${b.sat}% ${b.light}% / ${a})`;
+
+    ctx.save(); ctx.translate(b.x,b.y); ctx.rotate(b.rot);
+    for(let p=0;p<b.petals;p++){
+      const ang=p*2*Math.PI/b.petals; const r=b.rb*(1+0.3*Math.sin(3*ang + t*6));
+      const px=Math.cos(ang)*r, py=Math.sin(ang)*r;
+      ctx.save(); ctx.translate(px,py); ctx.rotate(ang);
+      ctx.save(); ctx.globalCompositeOperation="lighter";
+      ctx.fillStyle=pastelGlow; ctx.shadowColor=pastelGlow; ctx.shadowBlur=18;
+      ctx.beginPath(); ctx.ellipse(0,0, r*0.8, r*0.5, 0, 0, Math.PI*2); ctx.fill(); ctx.restore();
+      ctx.fillStyle=pastelBody; ctx.beginPath(); ctx.ellipse(0,0, r*0.6, r*0.35, 0, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+    ctx.save(); ctx.globalCompositeOperation="lighter";
+    ctx.fillStyle=`rgba(255,235,180,${0.15*a})`; ctx.shadowColor="rgba(255,235,180,0.6)"; ctx.shadowBlur=16;
+    ctx.beginPath(); ctx.arc(0,0,b.rb*0.6, 0, Math.PI*2); ctx.fill(); ctx.restore();
+    ctx.fillStyle=`rgba(255,235,180,${a})`; ctx.beginPath(); ctx.arc(0,0,b.rb*0.45, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+
+    if(b.age >= b.life){
+      const size = 2.6 + Math.random()*1.4;
+      assignNextNode(b.x, b.y, size);
+      playStarSound();
+      blooms.splice(i,1);
+    }
+  }
+  if (now < orbHighlightUntil){
+    const fade = (orbHighlightUntil - now) / 900;
+    const box = getSkyBox();
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = `rgba(180,220,255,${0.22*fade})`;
+    ctx.fillRect(box.x - 24, box.y - 24, box.w + 48, box.h + 48);
+    ctx.restore();
+  }
+
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(t=>{ lastT=t; draw(t); });
+
+const connectBtn = document.getElementById('connect');
+const clearBtn = document.getElementById('clear');
+const toggleLogBtn = document.getElementById('toggleLog');
+const helpBtn = document.getElementById('helpBtn');
+const testSoundBtn = document.getElementById('testSound');
+
+toggleLogBtn.addEventListener('click', ()=> panel.classList.toggle('hidden'));
+clearBtn.addEventListener('click', ()=>{
+  blooms.length=0; placedStars.length=0; movingStars.length=0; links.length=0; logEl.textContent='';
+  nextNodeIdx = 0; constelCompletedAt = 0; chooseConstellation();
+  ctx.clearRect(0,0,cv.width,cv.height);
+});
+helpBtn.addEventListener('click', ()=>{
+  alert(`Bloomfall — Earth to Constellations
+
+• Sensor input creates blooms (no auto-spawn).
+• When a bloom fades, it becomes a shimmering star with a soft chime, then flies to its constellation node.
+• Lines draw as soon as two relevant stars exist.
+• After a short showcase, a new constellation starts automatically.`);
+});
+
+if(ALLOW_MOUSE_FALLBACK){
+  let dwn=0; 
+  cv.addEventListener('mousedown', ()=>{ dwn=performance.now(); initAudioPool(); });
+  cv.addEventListener('mouseup', ()=>{ const held=performance.now()-dwn; if(held>400) handleSignal("2"); else handleSignal("1"); });
+}
+
+let port=null, reader=null, decoder=null, reading=false, lineBuf="";
+connectBtn.onclick = async () => {
+  initAudioPool(); 
+  if(!('serial' in navigator)){ setStatus("Serial: not supported (use Chrome/Edge)"); log("Web Serial not supported."); return; }
+  if(!window.isSecureContext){ setStatus("Serial: needs HTTPS/localhost"); log("Serve over https or localhost for Web Serial."); return; }
+  try{
+    if(reader){ try{ await reader.cancel(); }catch(_){} reader.releaseLock(); reader=null; }
+    if(port){ try{ await port.close(); }catch(_){} port=null; }
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 9600 });
+    setStatus("Serial: connected", true);
+    decoder = new TextDecoderStream();
+    port.readable.pipeTo(decoder.writable);
+    reader = decoder.readable.getReader();
+    log("Reading... Tap/press your sensor");
+    reading = true;
+    readLoop();
+  }catch(e){
+    setStatus("Serial: connection failed");
+    log("Error: " + (e.message || e));
+  }
+};
+async function readLoop(){
+  lineBuf="";
+  while(reading){
+    try{
+      const {value, done} = await reader.read();
+      if(done){ log("Stream closed."); break; }
+      if(value){
+        lineBuf += value;
+        let idx;
+        while((idx = lineBuf.search(/\r?\n/)) !== -1){
+          const ln = lineBuf.slice(0, idx).trim();
+          lineBuf = lineBuf.slice(idx + (lineBuf[idx]==='\r' && lineBuf[idx+1]==='\n' ? 2 : 1));
+          if(ln){ log("RX: " + ln); handleSignal(ln); }
+        }
+      }
+    }catch(e){ log("Read error: " + (e.message||e)); break; }
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+*{box-sizing:border-box}html,body{height:100%;margin:0;background:#0b1020;color:#e9eef7;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial}
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#0e1530;border-bottom:1px solid #1f2a44;position:sticky;top:0;z-index:10}
+h1{margin:0;font-size:18px;font-weight:700;letter-spacing:.5px}
+.controls{display:flex;gap:12px;align-items:center}
+.btn{padding:8px 12px;border:1px solid #2a3b6b;background:#15224a;color:#e9eef7;border-radius:10px;cursor:pointer;transition:transform .08s ease, background .18s}
+.btn:hover{background:#1b2c5e} .btn:active{transform:scale(0.98)}
+.status{font-size:12px;opacity:.85}
+#canvas-holder{width:100%;height:60vh;min-height:360px}
+main{padding:8px 12px}
+.help{opacity:.85;font-size:14px;margin-top:8px}
+footer{padding:8px 12px;border-top:1px solid #1f2a44;opacity:.7}
+.panel{margin-top:10px;background:#0f1836;border:1px solid #243463;border-radius:10px;padding:8px}
+.log{white-space:pre-wrap;max-height:180px;overflow:auto;background:#0a122a;padding:8px;border-radius:8px}
